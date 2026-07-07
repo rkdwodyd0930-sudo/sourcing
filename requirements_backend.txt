@@ -1,0 +1,7 @@
+# [11번가 vs 쿠팡 최저가 매칭 백엔드 마이그레이션 필요 패키지 의존성]
+fastapi==0.111.0
+uvicorn==0.30.1
+apscheduler==3.10.4
+psycopg[binary]
+pydantic==2.7.4
+python-dotenv==1.0.1
