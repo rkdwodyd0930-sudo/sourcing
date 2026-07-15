@@ -22,4 +22,5 @@ export type ProductItem = {
   price_difference?: number;
   matched_attr?: MatchedAttr;
   final_coupang_target?: CoupangTarget;
+  source_mall?: string;
 }

@@ -7,13 +7,15 @@ import json
 import time
 import os
 
+# 캐시 파일 및 디렉토리 설정 (queue_pipeline 내부로 격리)
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "crawling_cache_11st.json")
+os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+CACHE_TTL_SECONDS = 43200  # 12시간 (12 * 3600)
+
 def log(message):
-    print(f"👉 [진행상황] {message}", file=sys.stderr)
+    print(f"👉 [11번가 크롤러] {message}", file=sys.stderr)
 
 def handle_alert(driver):
-    """
-    브라우저에 Alert 경고창이 떠 있는지 확인하고 발견되면 닫습니다.
-    """
     try:
         alert = driver.switch_to.alert
         alert_text = alert.text
@@ -23,27 +25,38 @@ def handle_alert(driver):
     except:
         return False
 
+def load_cache() -> dict:
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            log(f"⚠️ 캐시 로드 실패: {e}")
+    return {}
+
+def save_cache(cache_data: dict):
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False, indent=4)
+        log(f"💾 캐시 영속화 완료 (총 {len(cache_data)}개 상품)")
+    except Exception as e:
+        log(f"⚠️ 캐시 저장 실패: {e}")
+
 def extract_options(driver, product_url):
-    """
-    상품 상세 페이지에 접속하여 옵션을 추출합니다.
-    """
     log(f"🔗 상세 페이지 접속: {product_url}")
     driver.get(product_url)
     
-    time.sleep(0.5) # 성능 최적화: 이미지/CSS가 차단되어 0.5초면 로딩 완료
+    time.sleep(0.5)
     if handle_alert(driver):
         return []
         
-    # 1. 아코디언 요소를 통해 옵션 개수 판별
     accordion_items = driver.find_elements(By.CSS_SELECTOR, "em.accordion_item, .accordion_item")
     accordion_texts = [el.get_attribute("textContent").strip() for el in accordion_items]
     
-    # 옵션 2 이상이 감지되면 다중 옵션이므로 빈 배열 처리
     if any("옵션 2" in txt or "옵션2" in txt for txt in accordion_texts):
         log("❌ 다중 옵션 상품 -> options = []")
         return []
         
-    # 단일 옵션(옵션 1) 혹은 일반 상품 선택 트리거가 존재하는지 판단
     has_opt1 = any("옵션 1" in txt or "옵션1" in txt for txt in accordion_texts)
     if not has_opt1:
         triggers = driver.find_elements(By.CSS_SELECTOR, ".c_product_select a, .c_product_select, button.c-product-option__select")
@@ -54,7 +67,6 @@ def extract_options(driver, product_url):
         log("❌ 옵션이 없는 단일 상품 -> options = []")
         return []
         
-    # 2. 클릭 없이 DOM 상에 렌더링된 옵션 버튼들 바로 수집 (hidden 상태도 textContent로 추출 가능)
     option_selectors = [
         "ul.dropdown_list li button.c_product_btn_select",
         "div.dropdown_list button",
@@ -87,19 +99,23 @@ def extract_options(driver, product_url):
         except:
             pass
             
-    log(f"👉 추출 완료: {len(options)}개 옵션 확보")
+    log(f"👉 상세 추출 완료: {len(options)}개 옵션 확보")
     return options
 
-def start_scraping():
-    LIMIT = 3
+def start_scraping(target_url=None, category_id="processed_food"):
+    LIMIT = 10
+    cache_data = load_cache()
     
-    log(f"🚀 스텔스 크롬 브라우저 초기화 (수집 제한 개수: {LIMIT}개)")
+    # target_url이 주어지지 않았을 경우 기본 가공식품 베스트 URL 사용
+    if not target_url:
+        target_url = "https://www.11st.co.kr/page/best?metaCtgrNo=167009&dispCtgr1No=1001338&categoryNo=167020&dispCtgrLevel=1&dispCtgrNo=1001338&dispCtgrCd=042016"
+        
+    log(f"🚀 스텔스 크롬 브라우저 초기화 (수집 제한 개수: {LIMIT}개, 카테고리: {category_id})")
     options = uc.ChromeOptions()
     options.add_argument('--window-size=1920,1080')
     options.add_argument('--disable-popup-blocking')
-    options.add_argument('--headless') # 렌더링 속도 향상을 위한 헤드리스 모드 활성화
+    options.add_argument('--headless')
     
-    # 성능 극대화를 위한 이미지 로딩 배제
     prefs = {
         "profile.managed_default_content_settings.images": 2,
         "profile.default_content_setting_values.notifications": 2
@@ -110,10 +126,9 @@ def start_scraping():
     driver = uc.Chrome(options=options)
     
     try:
-        # STEP 1: 베스트 가공식품 목록 페이지 접속
-        target_11st_url = "https://www.11st.co.kr/page/best?metaCtgrNo=167009&dispCtgr1No=1001338&categoryNo=167020&dispCtgrLevel=1&dispCtgrNo=1001338&dispCtgrCd=042016"
-        log("11번가 가공식품 베스트 페이지 접속 중...")
-        driver.get(target_11st_url)
+        # STEP 1: 베스트 목록 페이지 접속
+        log(f"11번가 베스트 페이지({category_id}) 접속 중: {target_url}")
+        driver.get(target_url)
         
         WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".c-card-item, .c_card_item, a.c-card-item__anchor"))
@@ -127,14 +142,12 @@ def start_scraping():
         # STEP 2: 상품 목록 파싱
         log("상품 링크 및 기본 정보 수집 중...")
         cards = driver.find_elements(By.CSS_SELECTOR, "div.c-card-item")
-        log(f"발견된 기본 카드 엘리먼트 수: {len(cards)}")
         
         products_list = []
         seen_links = set()
         
         for card in cards:
             try:
-                # 1. 링크 엘리먼트 추출 및 광고(data-log-actionid-area != product_list) 필터링
                 link_el = card.find_element(By.CSS_SELECTOR, "a.c-card-item__anchor")
                 area_attr = link_el.get_attribute("data-log-actionid-area") or ""
                 if area_attr != "product_list":
@@ -148,7 +161,6 @@ def start_scraping():
                     continue
                 seen_links.add(clean_link)
                 
-                # 2. 제목 추출
                 try:
                     title_el = card.find_element(By.CSS_SELECTOR, "div.c-card-item__name dd")
                 except:
@@ -157,11 +169,9 @@ def start_scraping():
                 if title.startswith("상품명"):
                     title = title[3:].strip()
                 
-                # 3. 가격 추출
                 price_el = card.find_element(By.CSS_SELECTOR, "dd.c-card-item__price span.value")
                 price = price_el.get_attribute("textContent").strip() + "원"
 
-                # 4. 이미지 URL 추출
                 img_url = ""
                 try:
                     img_el = card.find_element(By.CSS_SELECTOR, "span.c-lazyload img")
@@ -181,31 +191,53 @@ def start_scraping():
                 
                 if len(products_list) >= LIMIT: 
                     break
-            except Exception as e:
+            except Exception:
                 pass
                 
         target_products = products_list[:LIMIT]
         log(f"📋 수집 대상 기본 상품 개수: {len(target_products)}개")
         
-        # STEP 3: 상세 페이지 순회하며 옵션 수집
+        # STEP 3: 상세 페이지 순회하며 옵션 수집 (캐시 적용)
+        now = time.time()
         for idx, item in enumerate(target_products):
-            log(f"[{idx+1}/{len(target_products)}] '{item['name'][:20]}...' 옵션 분석 시작")
-            try:
-                options = extract_options(driver, item["link"])
-                item["options"] = options
-            except Exception as e:
-                log(f"❌ '{item['name'][:20]}...' 옵션 추출 중 예상치 못한 에러: {e}")
-                item["options"] = []
+            link = item["link"]
+            cached_info = cache_data.get(link)
+            
+            # 캐시가 있고 유효기간이 12시간 이내인 경우 크롤링 스킵 (Cache Hit)
+            if cached_info and (now - cached_info.get("timestamp", 0) < CACHE_TTL_SECONDS):
+                log(f"[CACHE HIT] [{idx+1}/{len(target_products)}] '{item['name'][:18]}...' -> 상세 수집 생략 (캐시 재활용)")
+                item["options"] = cached_info["options"]
+                if cached_info.get("img_url") and not item.get("img_url"):
+                    item["img_url"] = cached_info["img_url"]
+            else:
+                # 캐시가 없거나 만료된 경우 상세 크롤링 실행 (Cache Miss)
+                log(f"[CACHE MISS/EXPIRED] [{idx+1}/{len(target_products)}] '{item['name'][:18]}...' -> 상세 페이지 크롤링 실행")
+                try:
+                    options = extract_options(driver, link)
+                    item["options"] = options
+                    
+                    # 새로운 정보를 캐시에 기록
+                    cache_data[link] = {
+                        "options": options,
+                        "img_url": item["img_url"],
+                        "timestamp": now
+                    }
+                except Exception as e:
+                    log(f"❌ '{item['name'][:18]}...' 옵션 추출 중 에러: {e}")
+                    item["options"] = []
+                    
+        # 캐시 파일 갱신 저장
+        save_cache(cache_data)
                 
         # STEP 4: JSON 파일 저장
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        output_filename = os.path.join(current_dir, "products_11st.json")
+        output_filename = os.path.join(current_dir, "data", f"products_11st_temp_{category_id}.json")
         log(f"💾 최종 데이터 JSON 파일 저장 중 ({output_filename})...")
         
         with open(output_filename, "w", encoding="utf-8") as f:
             json.dump(target_products, f, ensure_ascii=False, indent=4)
             
-        log("✨ 모든 수집 작업 완료!")
+        log(f"✨ 11번가 캐시 수집 및 저장 완료! ({category_id})")
         
     except Exception as e:
         log(f"❌ 치명적 에러 발생: {str(e)}")

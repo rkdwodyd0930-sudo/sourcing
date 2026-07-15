@@ -12,4 +12,8 @@ ENV/
 
 # (선택) 수집한 대용량 JSON 데이터 파일들
 # 만약 테스트용 데이터라면 굳이 GitHub에 올리지 않는 것이 좋습니다.
+test
 *.json
+*.txt
+
+chrome_profile

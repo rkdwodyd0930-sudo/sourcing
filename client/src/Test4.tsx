@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { ProductItem } from './types/product';
 
 interface CategoryConfig {
@@ -8,10 +8,76 @@ interface CategoryConfig {
   target_url: string;
 }
 
-export default function Test() {
+// ngrok 및 로컬 API 연동을 위한 정적 Base URL 선언 (컴포넌트 바깥 최상단 배치)
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// 쇼핑몰 이름에 따른 로고 이미지 및 텍스트 렌더링 (칩 내부 배치용)
+const getMallLogo = (mallName: string, isActive = false) => {
+  const name = mallName.toLowerCase();
+  const textColor = isActive ? 'text-black' : 'text-slate-700';
+  
+  if (name.includes('11st') || name.includes('11번가')) {
+    return (
+      <div className="flex items-center gap-2 select-none">
+        <img src="/11st_logo.png" alt="11번가" className="h-2 object-contain" />
+        <span className={`font-bold text-xs tracking-tight ${textColor}`}>11번가</span>
+      </div>
+    );
+  }
+  if (name.includes('gmarket') || name.includes('지마켓')) {
+    const gColor = isActive ? 'text-white' : 'text-[#00A5E3]';
+    return (
+      <div className="flex items-center gap-1.5 select-none">
+        <div className="w-4 h-4 rounded-md bg-[#00A5E3] flex items-center justify-center text-white font-black text-[10px]">G</div>
+        <span className={`font-black text-xs tracking-tight ${gColor}`}>Gmarket</span>
+      </div>
+    );
+  }
+  if (name.includes('auction') || name.includes('옥션')) {
+    const aColor = isActive ? 'text-white' : 'text-[#E02020]';
+    return (
+      <div className="flex items-center gap-1.5 select-none">
+        <div className="w-4 h-4 rounded-md bg-[#E02020] flex items-center justify-center text-white font-black text-[10px]">A</div>
+        <span className={`font-black text-xs tracking-tight ${aColor}`}>AUCTION</span>
+      </div>
+    );
+  }
+  if (name.includes('smartstore') || name.includes('naver') || name.includes('네이버')) {
+    const nColor = isActive ? 'text-white' : 'text-[#03C75A]';
+    return (
+      <div className="flex items-center gap-1.5 select-none">
+        <div className="w-4 h-4 rounded-md bg-[#03C75A] flex items-center justify-center text-white font-black text-[10px]">N</div>
+        <span className={`font-black text-xs tracking-tight ${nColor}`}>SmartStore</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1.5 select-none">
+      <div className="w-4 h-4 rounded-md bg-slate-500 flex items-center justify-center text-white font-bold text-[10px]">
+        {mallName.substring(0, 1).toUpperCase()}
+      </div>
+      <span className={`font-black text-xs tracking-tight ${textColor}`}>{mallName}</span>
+    </div>
+  );
+};
+
+// 카테고리 이름 가독성 개선 유틸리티
+const cleanCategoryName = (name: string) => {
+  return name
+    .replace(/11번가/g, '')
+    .replace(/베스트500/g, '')
+    .replace(/\(기본값\)/g, '')
+    .trim();
+};
+
+export default function Test4() {
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [categories, setCategories] = useState<CategoryConfig[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('processed_food');
+  
+  // 쇼핑몰 및 카테고리 필터 상태 (전체 쇼핑몰 옵션 제거에 따른 기본값 11st 지정)
+  const [selectedMall, setSelectedMall] = useState<string>('11st');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  
   const [filter, setFilter] = useState<'all' | 'winner'>('all');
   
   // 백엔드 메타 정보 상태 관리
@@ -21,12 +87,29 @@ export default function Test() {
   const [error, setError] = useState<string | null>(null);
 
   // 1. API로부터 데이터 조회 함수
-  const fetchProducts = useCallback(async (category: string) => {
+  const fetchProducts = useCallback(async (mall: string, category: string) => {
     setLoading(true);
     setError(null);
     try {
-      // main_extended.py의 8000포트 API 호출
-      const response = await fetch(`http://localhost:8000/api/products?category=${category}`);
+      let url = `${API_BASE_URL}/api/products`;
+      const queryParams: string[] = [];
+      
+      // mall은 항상 유효한 특정 쇼핑몰 값이 오므로 무조건 파라미터 추가
+      queryParams.push(`mall=${encodeURIComponent(mall)}`);
+      
+      if (category !== 'all') {
+        queryParams.push(`category=${encodeURIComponent(category)}`);
+      }
+      
+      if (queryParams.length > 0) {
+        url += `?${queryParams.join('&')}`;
+      }
+      
+      const response = await fetch(url, {
+        headers: {
+          "ngrok-skip-browser-warning": "true"
+        }
+      });
       if (!response.ok) {
         throw new Error('데이터를 가져오는데 실패했습니다.');
       }
@@ -43,23 +126,51 @@ export default function Test() {
     }
   }, []);
 
-  // 2. 카테고리 변경 혹은 최초 로드 시 데이터 패칭
+  // 2. 쇼핑몰 또는 카테고리 변경 시 데이터 패칭
   useEffect(() => {
-    fetchProducts(selectedCategory);
-  }, [selectedCategory, fetchProducts]);
+    fetchProducts(selectedMall, selectedCategory);
+  }, [selectedMall, selectedCategory, fetchProducts]);
 
-  // 3. 백그라운드 크롤링 상태값 폴링 (업데이트 중일 때 5초마다 갱신 체크)
+  // 쇼핑몰 변경 시 카테고리를 '전체(all)'로 초기화하여 UI 정합성 유지
+  useEffect(() => {
+    setSelectedCategory('all');
+  }, [selectedMall]);
+
+  // 카테고리 설정 마스터 리스트가 로드되었을 때, 만약 현재 selectedMall이 유효하지 않은 값이면 첫 번째 값으로 보정
+  useEffect(() => {
+    if (categories.length > 0) {
+      const mallNames = Array.from(new Set(categories.map((c) => c.mall_name)));
+      if (!mallNames.includes(selectedMall)) {
+        setSelectedMall(mallNames[0]);
+      }
+    }
+  }, [categories, selectedMall]);
+
+  // 3. 백그라운드 크롤링 상태값 폴링
   useEffect(() => {
     let timer: number;
     if (isUpdating) {
       timer = window.setInterval(async () => {
         try {
-          const response = await fetch(`http://localhost:8000/api/products?category=${selectedCategory}`);
+          let url = `${API_BASE_URL}/api/products`;
+          const queryParams: string[] = [];
+          queryParams.push(`mall=${encodeURIComponent(selectedMall)}`);
+          if (selectedCategory !== 'all') {
+            queryParams.push(`category=${encodeURIComponent(selectedCategory)}`);
+          }
+          if (queryParams.length > 0) {
+            url += `?${queryParams.join('&')}`;
+          }
+          
+          const response = await fetch(url, {
+            headers: {
+              "ngrok-skip-browser-warning": "true"
+            }
+          });
           if (response.ok) {
             const data = await response.json();
             setIsUpdating(data.is_updating);
             if (!data.is_updating) {
-              // 업데이트 완료 시점 데이터 최종 리프레시
               setProducts(data.products || []);
               setLastUpdated(data.last_updated || '');
               clearInterval(timer);
@@ -73,7 +184,7 @@ export default function Test() {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [isUpdating, selectedCategory]);
+  }, [isUpdating, selectedMall, selectedCategory]);
 
   // 4. 수동 수집 강제 트리거 함수
   const triggerManualUpdate = async () => {
@@ -84,8 +195,11 @@ export default function Test() {
     }
 
     try {
-      const response = await fetch('http://localhost:8000/api/products/trigger', {
+      const response = await fetch(`${API_BASE_URL}/api/products/trigger`, {
         method: 'POST',
+        headers: {
+          "ngrok-skip-browser-warning": "true"
+        }
       });
       if (response.ok) {
         setIsUpdating(true);
@@ -118,13 +232,11 @@ export default function Test() {
         <div className="flex items-center gap-2">
           <span className="relative flex h-3 w-3">
             {isUpdating ? (
-              // 🟡 업데이트 가동 중일 때 황색 이펙트
               <>
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
               </>
             ) : (
-              // 🔴 대기 중일 때 파란색 이펙트
               <>
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
@@ -144,12 +256,8 @@ export default function Test() {
           </p>
           <button
             onClick={triggerManualUpdate}
-            disabled={isUpdating}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all shadow-2xs ${
-              isUpdating 
-                ? 'bg-slate-300 text-slate-500 cursor-not-allowed' 
-                : 'bg-indigo-600 text-white hover:bg-indigo-700'
-            }`}
+            disabled={true || isUpdating}
+            className="px-3 py-1.5 text-xs font-bold rounded-lg transition-all shadow-2xs bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:pointer-events-auto"
           >
             {isUpdating ? '수집 중...' : '⚡ 즉시 수집'}
           </button>
@@ -184,39 +292,100 @@ export default function Test() {
       </div>
 
       {/* 4. 카테고리 선택 & 필터 컨트롤 구역 */}
-      <div className="max-w-6xl mx-auto mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="max-w-6xl mx-auto mb-6 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-5">
         
-        {/* DB 연동 카테고리 셀렉터 탭 */}
-        <div className="flex flex-wrap gap-2">
-          {categories.map((cat) => (
-            <button
-              key={cat.category_id}
-              onClick={() => setSelectedCategory(cat.category_id)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                selectedCategory === cat.category_id
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {cat.category_name} ({cat.mall_name})
-            </button>
-          ))}
+        {/* 쇼핑몰 선택 영역 (상단) - 전체 쇼핑몰 옵션이 제거됨 */}
+        <div className="flex flex-col gap-2.5">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">쇼핑몰 선택</span>
+          <div className="flex flex-wrap gap-2">
+            {Array.from(new Set(categories.map((c) => c.mall_name))).map((mall) => {
+              const isActive = selectedMall === mall;
+              return (
+                <button
+                  key={mall}
+                  onClick={() => setSelectedMall(mall)}
+                  className={`inline-flex items-center rounded-full transition-all border ${
+                    isActive
+                      ? 'bg-indigo-600/10 border-indigo-600 shadow-sm'
+                      : 'bg-white border-slate-200 hover:bg-slate-50'
+                  } px-4 py-2`}
+                >
+                  {getMallLogo(mall, isActive)}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
+        <hr className="border-slate-100" />
+
+        {/* 카테고리 선택 영역 (하단) - 선택된 쇼핑몰의 카테고리만 동적 노출 */}
+        <div className="flex flex-col gap-2.5">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">카테고리</span>
+          <div className="flex flex-wrap gap-2">
+            {/* 전체 카테고리 선택 칩 */}
+            <button
+              onClick={() => setSelectedCategory('all')}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all border ${
+                selectedCategory === 'all'
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              전체
+            </button>
+
+            {/* 개별 카테고리 선택 칩들 */}
+            {categories
+              .filter((c) => c.mall_name === selectedMall)
+              .map((cat) => {
+                const isActive = selectedCategory === cat.category_id;
+                return (
+                  <button
+                    key={cat.category_id}
+                    onClick={() => setSelectedCategory(cat.category_id)}
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all border ${
+                      isActive
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {cleanCategoryName(cat.category_name)}
+                  </button>
+                );
+              })}
+          </div>
+        </div>
+
+        <hr className="border-slate-100" />
+
         {/* 위너 필터링 버튼 */}
-        <div className="flex gap-2">
-          <button 
-            onClick={() => setFilter('all')} 
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${filter === 'all' ? 'bg-slate-900 text-white shadow-md shadow-slate-900/10' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
-          >
-            전체 상품 리스트
-          </button>
-          <button 
-            onClick={() => setFilter('winner')} 
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${filter === 'winner' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/10' : 'bg-white text-emerald-600 border border-emerald-200 hover:bg-emerald-50'}`}
-          >
-            🏆 위너 찬스만 ({winnerCount})
-          </button>
+        <div className="flex justify-between items-center flex-wrap gap-3">
+          <span className="text-xs font-medium text-slate-400">
+            * 쇼핑몰과 카테고리를 선택해 실시간 최저가를 모니터링하세요.
+          </span>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => setFilter('all')} 
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                filter === 'all' 
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/10' 
+                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              전체 상품 리스트
+            </button>
+            <button 
+              onClick={() => setFilter('winner')} 
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                filter === 'winner' 
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/10' 
+                  : 'bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50'
+              }`}
+            >
+              🏆 위너 찬스만 ({winnerCount})
+            </button>
+          </div>
         </div>
       </div>
 
@@ -231,7 +400,7 @@ export default function Test() {
           <p className="font-bold mb-2">⚠️ 데이터를 로드할 수 없습니다.</p>
           <p className="text-xs text-rose-500">{error}</p>
           <button 
-            onClick={() => fetchProducts(selectedCategory)}
+            onClick={() => fetchProducts(selectedMall, selectedCategory)}
             className="mt-4 px-4 py-2 bg-rose-600 text-white text-xs font-bold rounded-lg hover:bg-rose-700 transition-all"
           >
             다시 시도
@@ -329,7 +498,7 @@ export default function Test() {
                       <p className="text-xl font-black text-slate-800 mt-2">{item["11st_price"]}</p>
                     </div>
                     <a href={item["11st_link"]} target="_blank" rel="noreferrer" className="text-xs text-slate-400 hover:text-orange-500 underline transition-colors">
-                      11번가 원본 판매 페이지 ↗
+                      {item.source_mall ? item.source_mall.toUpperCase() : 'SOURCE'} 원본 판매 페이지 ↗
                     </a>
                   </div>
                 </div>
